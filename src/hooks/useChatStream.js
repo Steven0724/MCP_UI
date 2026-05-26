@@ -1,15 +1,38 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 
 const API_ENDPOINT = '/api/chat'
+const LS_SESSION_ID = 'mcp_session_id'
+const LS_SESSIONS = 'mcp_sessions'
 
 function ts() { return Date.now() }
+
 function shortTitle(text) {
   return text.length > 36 ? text.slice(0, 36) + '…' : text
 }
 
+// read from localStorage, mint a new UUID only when absent
+function getOrInitSessionId() {
+  const stored = localStorage.getItem(LS_SESSION_ID)
+  if (stored) return stored
+  const fresh = uuidv4()
+  localStorage.setItem(LS_SESSION_ID, fresh)
+  return fresh
+}
+
+// rehydrate sessions from localStorage on first render
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(LS_SESSIONS)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
 export function useChatStream() {
-  const [sessions, setSessions] = useState([])
+  // lazy init: session list rehydrated from localStorage
+  const [sessions, setSessions] = useState(loadSessions)
   const [currentSession, setCurrentSession] = useState(null)
   const [messages, setMessages] = useState([])
   const [isStreaming, setIsStreaming] = useState(false)
@@ -18,38 +41,69 @@ export function useChatStream() {
   const sessionIdRef = useRef(uuidv4())
   const abortRef = useRef(null)
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_SESSIONS, JSON.stringify(sessions))
+    } catch {
+    }
+  }, [sessions])
+
+  // clearHistory 
   const clearHistory = useCallback(() => {
     const newId = uuidv4()
     sessionIdRef.current = newId
+
+    localStorage.setItem(LS_SESSION_ID, newId)
     setMessages([])
     setError(null)
     setCurrentSession(null)
   }, [])
 
+  // switchSession
   const switchSession = useCallback((session) => {
     setCurrentSession(session.id)
     setMessages(session.messages)
     sessionIdRef.current = session.id
+    // Persist so refresh reopens the same session
+    localStorage.setItem(LS_SESSION_ID, session.id)
   }, [])
 
+  // deleteSession
+  const deleteSession = useCallback((sessionId) => {
+    setSessions(prev => {
+      const next = prev.filter(s => s.id !== sessionId)
+      // Write immediately — don't wait for the useEffect tick
+      try { localStorage.setItem(LS_SESSIONS, JSON.stringify(next)) } catch {}
+      return next
+    })
+
+    // open a fresh blank chat, if delete session 
+    if (sessionIdRef.current === sessionId) {
+      const newId = uuidv4()
+      sessionIdRef.current = newId
+      localStorage.setItem(LS_SESSION_ID, newId)
+      setMessages([])
+      setError(null)
+      setCurrentSession(null)
+    }
+  }, [])
+
+  // sendMessage
   const sendMessage = useCallback(async (text) => {
     if (isStreaming || !text.trim()) return
     setError(null)
 
-    const userMsg = { id: uuidv4(), role: 'user', content: text.trim(), ts: ts() }
+    const userMsg = { id: uuidv4(), role: 'user',content: text.trim(), ts: ts() }
     const assistantId = uuidv4()
     const assistantMsg = { id: assistantId, role: 'assistant', content: '', ts: ts(), streaming: true }
-
-    const newMessages = (prev) => [...prev, userMsg, assistantMsg]
 
     setMessages(prev => {
       const next = [...prev, userMsg, assistantMsg]
 
-      // Update or create session in sidebar
       setSessions(sessions => {
-        const sid = sessionIdRef.current
+        const sid      = sessionIdRef.current
         const existing = sessions.findIndex(s => s.id === sid)
-        const title = sessions.find(s => s.id === sid)?.title || shortTitle(text)
+        const title    = sessions.find(s => s.id === sid)?.title || shortTitle(text)
         if (existing >= 0) {
           const updated = [...sessions]
           updated[existing] = { ...updated[existing], messages: next, preview: text, updatedAt: ts() }
@@ -62,15 +116,15 @@ export function useChatStream() {
     })
 
     setIsStreaming(true)
-    const controller = new AbortController()
-    abortRef.current = controller
+    const controller  = new AbortController()
+    abortRef.current  = controller
 
     try {
       const response = await fetch(API_ENDPOINT, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({ sessionId: sessionIdRef.current, message: text.trim() }),
-        signal: controller.signal,
+        body:    JSON.stringify({ sessionId: sessionIdRef.current, message: text.trim() }),
+        signal:  controller.signal,
       })
 
       if (!response.ok) {
@@ -114,6 +168,7 @@ export function useChatStream() {
         ))
         return next
       })
+
     } catch (err) {
       if (err.name === 'AbortError') {
         setMessages(prev => prev.map(m =>
@@ -129,9 +184,22 @@ export function useChatStream() {
     }
   }, [isStreaming])
 
+  // stopStreaming 
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort()
   }, [])
 
-  return { messages, isStreaming, error, sessionId: sessionIdRef.current, sessions, currentSession, sendMessage, stopStreaming, clearHistory, switchSession }
+  return {
+    messages,
+    isStreaming,
+    error,
+    sessionId: sessionIdRef.current,
+    sessions,
+    currentSession,
+    sendMessage,
+    stopStreaming,
+    clearHistory,
+    switchSession,
+    deleteSession, 
+  }
 }
