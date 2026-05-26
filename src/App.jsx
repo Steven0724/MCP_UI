@@ -19,6 +19,7 @@ export default function App() {
     sessions,
     currentSession,
     switchSession,
+    deleteSession,  
   } = useChatStream()
 
   const messagesEndRef = useRef(null)
@@ -65,6 +66,7 @@ export default function App() {
         onNew={clearHistory}
         onSwitch={switchSession}
         onToggle={() => setSidebarOpen(o => !o)}
+        onDelete={deleteSession}
         isStreaming={isStreaming}
       />
 
