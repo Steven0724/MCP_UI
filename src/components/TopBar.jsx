@@ -87,7 +87,7 @@ export default function TopBar({ onToggleSidebar, sidebarOpen }) {
         <div className={styles.sep} />
         <Indicator label="Orchestrator :8081"  status={orchStatus} />
         <div className={styles.sep} />
-        <Indicator label="LLM · Llama 3.3 70B" status={llmStatus} />
+        <Indicator label="Databricks LLM" status={llmStatus} />
       </div>
 
       <div className={styles.right} />
